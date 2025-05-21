@@ -14,7 +14,7 @@ from nltk.tokenize.treebank import TreebankWordDetokenizer
 import nltk
 import random
 
-nltk.download("punkt")
+nltk.download("punkt_tab")
 
 st.set_page_config(page_title="JobBERT-TSDAE Dashboard", layout="wide")
 st.title("JobBERT-TSDAE Embedding Dashboard")
