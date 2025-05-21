@@ -14,6 +14,12 @@ from nltk.tokenize.treebank import TreebankWordDetokenizer
 import nltk
 import random
 
+from nltk.corpus import stopwords
+import re
+import string
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
+
 nltk.download("punkt_tab")
 
 st.set_page_config(page_title="JobBERT-TSDAE Dashboard", layout="wide")
