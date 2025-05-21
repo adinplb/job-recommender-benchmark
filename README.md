@@ -1,13 +1,10 @@
-# 📦 Streamlit App Starter Kit 
-```
-⬆️ (Replace above with your app's name)
-```
+# Job Recommendationg Using TSDAE
 
-Description of the app ...
+Visualizing Embedding of Job2Vec TSDAE
 
 ## Demo App
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://app-starter-kit.streamlit.app/)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://tsdae-embeddings.streamlit.app/)
 
 ## GitHub Codespaces
 
