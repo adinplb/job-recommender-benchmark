@@ -15,8 +15,8 @@ import string
 from nltk.stem import WordNetLemmatizer
 from nltk import word_tokenize
 from nltk.corpus import stopwords
-  >>> import nltk
-  >>> nltk.download('punkt_tab')
+import nltk
+nltk.download('punkt_tab')
 
 # === Title ===
 st.title("📊 TSDAE Embedding Visualizer for Tech Jobs")
