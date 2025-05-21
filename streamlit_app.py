@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import random
+from collections import Counter
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import batch_to_device
 from sklearn.cluster import KMeans
@@ -10,31 +12,48 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
 
-
-import nltk
-import os
-from nltk import word_tokenize
-from nltk.tokenize.treebank import TreebankWordDetokenizer
-
-nltk.download("punkt")
-nltk.download('punkt_tab')
-nltk_data_dir = os.path.expanduser('~/nltk_data')
-
-# Set nltk data path (optional)
-nltk.data.path.append(nltk_data_dir)
-
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', download_dir=nltk_data_dir)
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords', download_dir=nltk_data_dir)
-
-
 st.set_page_config(page_title="JobBERT-TSDAE Dashboard", layout="wide")
 st.title("JobBERT-TSDAE Embedding Dashboard")
+
+# -------------------- DENOISING FUNCTIONS --------------------
+
+def build_word_freq_dict(texts):
+    all_words = ' '.join(texts).lower().split()
+    return Counter(all_words)
+
+def denoise_text(text, method='a', del_ratio=0.6, word_freq_dict=None, freq_threshold=100):
+    words = text.split()
+    n = len(words)
+    if n == 0:
+        return text
+
+    if method == 'a':
+        keep_or_not = np.random.rand(n) > del_ratio
+        if sum(keep_or_not) == 0:
+            keep_or_not[random.randint(0, n - 1)] = True
+        result = np.array(words)[keep_or_not]
+
+    elif method == 'b':
+        if word_freq_dict is None:
+            raise ValueError("word_freq_dict is required for method 'b' or 'c'")
+        high_freq_indices = [i for i, w in enumerate(words) if word_freq_dict.get(w.lower(), 0) > freq_threshold]
+        to_remove = set(random.sample(high_freq_indices, int(del_ratio * len(high_freq_indices)))) if high_freq_indices else set()
+        result = [w for i, w in enumerate(words) if i not in to_remove]
+
+    elif method == 'c':
+        if word_freq_dict is None:
+            raise ValueError("word_freq_dict is required for method 'b' or 'c'")
+        high_freq_indices = [i for i, w in enumerate(words) if word_freq_dict.get(w.lower(), 0) > freq_threshold]
+        to_remove = set(random.sample(high_freq_indices, int(del_ratio * len(high_freq_indices)))) if high_freq_indices else set()
+        result = [w for i, w in enumerate(words) if i not in to_remove]
+        random.shuffle(result)
+
+    else:
+        raise ValueError("Unknown denoising method. Use 'a', 'b', or 'c'.")
+
+    return ' '.join(result)
+
+# -------------------- DATA LOADING --------------------
 
 @st.cache_data
 def load_data():
@@ -45,6 +64,8 @@ def load_data():
 
 df = load_data()
 st.success(f"Loaded {len(df)} job descriptions")
+
+# -------------------- MODEL AND ENCODING --------------------
 
 @st.cache_resource(show_spinner=False)
 def load_model():
@@ -72,29 +93,29 @@ def encode(texts, batch_size=8):
     original_order = np.argsort(sorted_indices)
     return sorted_embeddings[original_order]
 
-def denoise_text(text, method='a', del_ratio=0.6):
-    words = word_tokenize(text)
-    n = len(words)
-    if n == 0:
-        return text
-    if method == 'a':
-        keep_or_not = np.random.rand(n) > del_ratio
-        if sum(keep_or_not) == 0:
-            keep_or_not[np.random.choice(n)] = True
-        result = np.array(words)[keep_or_not]
-    else:
-        raise ValueError("Only method 'a' supported in dashboard.")
-    return TreebankWordDetokenizer().detokenize(result)
+# -------------------- DENOISING + ENCODING --------------------
 
 with st.spinner("Generating TSDAE embeddings..."):
     clean_texts = df['text'].tolist()
-    noisy_texts = [denoise_text(t) for t in clean_texts]
+
+    # Denoising method selection (optional UI)
+    denoise_method = st.sidebar.selectbox("Denoising Method", ["a: Random Deletion", "b: Frequency-Based", "c: Freq + Shuffle"])
+    method_code = denoise_method[0]  # 'a', 'b', or 'c'
+
+    freq_dict = build_word_freq_dict(clean_texts) if method_code in ['b', 'c'] else None
+    noisy_texts = [denoise_text(text, method=method_code, word_freq_dict=freq_dict) for text in clean_texts]
+
+    # Generate embeddings
     clean_embeddings = encode(clean_texts)
     noisy_embeddings = encode(noisy_texts)
+
+    # TSDAE-style combination
     tsdae_embeddings = (clean_embeddings + noisy_embeddings) / 2.0
     df['tsdae_embedding'] = tsdae_embeddings.tolist()
 
 st.success("TSDAE Embeddings Generated")
+
+# -------------------- CLUSTERING --------------------
 
 num_clusters = st.sidebar.slider("Number of Clusters", min_value=5, max_value=50, value=20)
 
@@ -106,6 +127,8 @@ with st.spinner("Clustering embeddings..."):
 
 st.subheader("Cluster Distribution")
 st.bar_chart(df['cluster'].value_counts().sort_index())
+
+# -------------------- VISUALIZATION --------------------
 
 method = st.sidebar.radio("Dimensionality Reduction Method", ["PCA"])
 
@@ -119,6 +142,8 @@ if method == "PCA":
     sns.scatterplot(data=df, x='x', y='y', hue='cluster', palette='tab10', legend=False, s=30, ax=ax)
     ax.set_title("TSDAE Embedding Clusters (2D PCA)")
     st.pyplot(fig)
+
+# -------------------- SEARCH --------------------
 
 st.subheader("Search and Recommend")
 query = st.text_input("Enter job title or description (e.g., 'data scientist')")
