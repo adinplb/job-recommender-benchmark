@@ -9,6 +9,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.manifold import TSNE
 import plotly.express as px
 
+
+import string
+from nltk.stem import WordNetLemmatizer
+from nltk import word_tokenize
+from nltk.corpus import stopwords
+
 # Download NLTK resources
 nltk.download('punkt')
 nltk.download('stopwords')
