@@ -45,7 +45,7 @@ def encode_batch(jobbert_model, texts):
     return out_features["sentence_embedding"].cpu().numpy()
 
 @st.cache_data
-def encode(jobbert_model, texts, batch_size=8):
+def encode(_jobbert_model, texts, batch_size=8):
     sorted_indices = np.argsort([len(text) for text in texts])
     sorted_texts = [texts[i] for i in sorted_indices]
     embeddings = []
