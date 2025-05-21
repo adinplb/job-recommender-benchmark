@@ -18,7 +18,7 @@ from nltk.corpus import stopwords
 # Download NLTK resources
 nltk.download('punkt')
 nltk.download('stopwords')
-
+nltk.download('punkt_tab')
 # Set title
 st.title("📊 TF-IDF Embedding Visualizer for Tech Jobs (with Preprocessing)")
 
