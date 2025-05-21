@@ -12,13 +12,6 @@ import torch
 from nltk import word_tokenize
 from nltk.tokenize.treebank import TreebankWordDetokenizer
 import nltk
-import random
-
-from nltk.corpus import stopwords
-import re
-import string
-from nltk.stem import WordNetLemmatizer
-from nltk.corpus import stopwords
 
 nltk.download("punkt_tab")
 
@@ -35,14 +28,13 @@ def load_data():
 df = load_data()
 st.success(f"Loaded {len(df)} job descriptions")
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_model():
     return SentenceTransformer("TechWolf/JobBERT-v2")
 
-jobbert_model = load_model()
-
 @st.cache_data
-def encode_batch(model, texts):
+def encode_batch(texts):
+    model = load_model()
     features = model.tokenize(texts)
     features = batch_to_device(features, model.device)
     features["text_keys"] = ["anchor"]
@@ -51,13 +43,13 @@ def encode_batch(model, texts):
     return out_features["sentence_embedding"].cpu().numpy()
 
 @st.cache_data
-def encode(model, texts, batch_size=8):
+def encode(texts, batch_size=8):
     sorted_indices = np.argsort([len(text) for text in texts])
     sorted_texts = [texts[i] for i in sorted_indices]
     embeddings = []
     for i in range(0, len(sorted_texts), batch_size):
         batch = sorted_texts[i:i+batch_size]
-        embeddings.append(encode_batch(model, batch))
+        embeddings.append(encode_batch(batch))
     sorted_embeddings = np.concatenate(embeddings)
     original_order = np.argsort(sorted_indices)
     return sorted_embeddings[original_order]
@@ -79,8 +71,8 @@ def denoise_text(text, method='a', del_ratio=0.6):
 with st.spinner("Generating TSDAE embeddings..."):
     clean_texts = df['text'].tolist()
     noisy_texts = [denoise_text(t) for t in clean_texts]
-    clean_embeddings = encode(jobbert_model, clean_texts)
-    noisy_embeddings = encode(jobbert_model, noisy_texts)
+    clean_embeddings = encode(clean_texts)
+    noisy_embeddings = encode(noisy_texts)
     tsdae_embeddings = (clean_embeddings + noisy_embeddings) / 2.0
     df['tsdae_embedding'] = tsdae_embeddings.tolist()
 
@@ -115,7 +107,7 @@ query = st.text_input("Enter job title or description (e.g., 'data scientist')")
 
 if query:
     with st.spinner("Generating embedding and searching..."):
-        query_embedding = encode(jobbert_model, [query])
+        query_embedding = encode([query])
         cluster_sim = cosine_similarity(query_embedding, kmeans.cluster_centers_)
         best_cluster = np.argmax(cluster_sim)
         cluster_subset = df[df['cluster'] == best_cluster]
