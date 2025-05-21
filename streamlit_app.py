@@ -9,11 +9,14 @@ import plotly.express as px
 from nltk.tokenize import word_tokenize, TreebankWordDetokenizer
 from sentence_transformers import SentenceTransformer, util
 from sentence_transformers.util import batch_to_device
-import nltk
-
-# Ensure NLTK tokenizer resources are available
-nltk.download('punkt')
-
+from nltk.corpus import stopwords
+import re
+import string
+from nltk.stem import WordNetLemmatizer
+from nltk import word_tokenize
+from nltk.corpus import stopwords
+  >>> import nltk
+  >>> nltk.download('punkt_tab')
 
 # === Title ===
 st.title("📊 TSDAE Embedding Visualizer for Tech Jobs")
