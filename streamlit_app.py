@@ -9,11 +9,28 @@ from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
+
+
+import nltk
+import os
 from nltk import word_tokenize
 from nltk.tokenize.treebank import TreebankWordDetokenizer
-import nltk
 
-nltk.download("punkt_tab")
+nltk.download("punkt")
+nltk_data_dir = os.path.expanduser('~/nltk_data')
+
+# Set nltk data path (optional)
+nltk.data.path.append(nltk_data_dir)
+
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', download_dir=nltk_data_dir)
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords', download_dir=nltk_data_dir)
+
 
 st.set_page_config(page_title="JobBERT-TSDAE Dashboard", layout="wide")
 st.title("JobBERT-TSDAE Embedding Dashboard")
