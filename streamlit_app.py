@@ -1,167 +1,222 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import random
-from collections import Counter
-from sentence_transformers import SentenceTransformer
-from sentence_transformers.util import batch_to_device
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-from sklearn.metrics.pairwise import cosine_similarity
-import matplotlib.pyplot as plt
-import seaborn as sns
-import torch
+import re # For basic keyword extraction
 
-st.set_page_config(page_title="JobBERT-TSDAE Dashboard", layout="wide")
-st.title("JobBERT-TSDAE Embedding Dashboard")
+# --- Constants ---
+# DATA_URL = 'https://raw.githubusercontent.com/adinplb/largedataset-JRec/refs/heads/main/Filtered_Jobs_4000.csv'
+# In a real scenario, you would load your data here.
+# For now, we'll use a sample DataFrame.
 
-# -------------------- DENOISING FUNCTIONS --------------------
+FEATURES_TO_COMBINE = [
+    'Status', 'Title', 'Position', 'Company',
+    'City', 'State.Name', 'Industry', 'Job.Description',
+    'Employment.Type', 'Education.Required'
+]
+JOB_DETAIL_FEATURES_TO_DISPLAY = [
+    'Company', 'Status', 'City', 'Job.Description', 'Employment.Type',
+    'Position', 'Industry', 'Education.Required', 'State.Name', 'Title' # Added Title for clarity
+]
 
-def build_word_freq_dict(texts):
-    all_words = ' '.join(texts).lower().split()
-    return Counter(all_words)
-
-def denoise_text(text, method='a', del_ratio=0.6, word_freq_dict=None, freq_threshold=100):
-    words = text.split()
-    n = len(words)
-    if n == 0:
-        return text
-
-    if method == 'a':
-        keep_or_not = np.random.rand(n) > del_ratio
-        if sum(keep_or_not) == 0:
-            keep_or_not[random.randint(0, n - 1)] = True
-        result = np.array(words)[keep_or_not]
-
-    elif method == 'b':
-        if word_freq_dict is None:
-            raise ValueError("word_freq_dict is required for method 'b' or 'c'")
-        high_freq_indices = [i for i, w in enumerate(words) if word_freq_dict.get(w.lower(), 0) > freq_threshold]
-        to_remove = set(random.sample(high_freq_indices, int(del_ratio * len(high_freq_indices)))) if high_freq_indices else set()
-        result = [w for i, w in enumerate(words) if i not in to_remove]
-
-    elif method == 'c':
-        if word_freq_dict is None:
-            raise ValueError("word_freq_dict is required for method 'b' or 'c'")
-        high_freq_indices = [i for i, w in enumerate(words) if word_freq_dict.get(w.lower(), 0) > freq_threshold]
-        to_remove = set(random.sample(high_freq_indices, int(del_ratio * len(high_freq_indices)))) if high_freq_indices else set()
-        result = [w for i, w in enumerate(words) if i not in to_remove]
-        random.shuffle(result)
-
-    else:
-        raise ValueError("Unknown denoising method. Use 'a', 'b', or 'c'.")
-
-    return ' '.join(result)
-
-# -------------------- DATA LOADING --------------------
-
-@st.cache_data
+# --- Helper Functions ---
+@st.cache_data # Cache the data loading to improve performance
 def load_data():
-    url = "https://raw.githubusercontent.com/adinplb/dp-machinelearning-ai/refs/heads/master/dataset/combined_jobs_2000.csv"
-    df = pd.read_csv(url)
-    df['text'] = df['text'].fillna("")
+    """
+    Loads the data.
+    Replace this with your actual data loading logic, e.g., pd.read_csv(DATA_URL)
+    """
+    data = {
+        'Status': ['Full-time', 'Part-time', 'Full-time', 'Full-time', 'Contract', 'Full-time', 'Full-time', 'Part-time', 'Full-time', 'Full-time'],
+        'Title': [
+            'Software Engineer', 'Data Analyst', 'Senior Software Engineer', 'Product Manager',
+            'UX Designer', 'Software Engineer', 'Marketing Manager', 'Junior Data Analyst',
+            'Senior Product Manager', 'DevOps Engineer'
+        ],
+        'Position': [
+            'Mid-Level', 'Entry-Level', 'Senior-Level', 'Manager',
+            'Mid-Level', 'Mid-Level', 'Manager', 'Entry-Level',
+            'Senior-Level', 'Mid-Level'
+        ],
+        'Company': ['Tech Solutions Inc.', 'Data Insights LLC', 'Innovate Corp', 'Productive Co.',
+                    'Creative Designs', 'Tech Solutions Inc.', 'Market Growth Ltd.', 'Data Insights LLC',
+                    'Productive Co.', 'Cloud Services Co.'],
+        'City': ['San Francisco', 'New York', 'San Francisco', 'Austin',
+                 'Remote', 'Boston', 'Chicago', 'New York',
+                 'Austin', 'Seattle'],
+        'State.Name': ['California', 'New York', 'California', 'Texas',
+                       'N/A', 'Massachusetts', 'Illinois', 'New York',
+                       'Texas', 'Washington'],
+        'Industry': ['Technology', 'Analytics', 'Technology', 'Software',
+                     'Design', 'Technology', 'Marketing', 'Analytics',
+                     'Software', 'Technology'],
+        'Job.Description': [
+            'Develop and maintain web applications.', 'Analyze data to provide insights.',
+            'Lead development of new software features.', 'Define product strategy and roadmap.',
+            'Design user-friendly interfaces for web and mobile.', 'Build scalable software solutions.',
+            'Develop and execute marketing campaigns.', 'Assist senior analysts with data tasks.',
+            'Oversee product lifecycle from conception to launch.', 'Manage and automate cloud infrastructure.'
+        ],
+        'Employment.Type': ['Permanent', 'Permanent', 'Permanent', 'Permanent',
+                            'Contract', 'Permanent', 'Permanent', 'Permanent',
+                            'Permanent', 'Permanent'],
+        'Education.Required': [
+            "Bachelor's Degree in Computer Science", "Bachelor's Degree in Statistics or related",
+            "Master's Degree in Computer Science", "Bachelor's or Master's Degree",
+            "Bachelor's Degree in Design", "Bachelor's Degree in Computer Science",
+            "Bachelor's Degree in Marketing", "Associate's or Bachelor's Degree",
+            "MBA or equivalent experience", "Bachelor's Degree in IT or related"
+        ]
+    }
+    df = pd.DataFrame(data)
+    # Ensure all required columns exist, fill with NA if not (important for real data)
+    for col in FEATURES_TO_COMBINE:
+        if col not in df.columns:
+            df[col] = pd.NA
     return df
 
-df = load_data()
-st.success(f"Loaded {len(df)} job descriptions")
+def get_broad_categories(titles_series):
+    """
+    Creates broader categories from job titles using keywords.
+    This is a very basic example. You might want a more sophisticated approach.
+    """
+    categories = {}
+    keyword_map = {
+        'Engineer': 'Engineering',
+        'Analyst': 'Analytics',
+        'Manager': 'Management',
+        'Designer': 'Design',
+        'Developer': 'Development', # Could be grouped with Engineering
+        'Scientist': 'Research & Science'
+    }
+    # Ensure titles_series is Series of strings and handle NaN
+    titles_series = titles_series.astype(str).fillna('')
 
-# -------------------- MODEL AND ENCODING --------------------
+    for title in titles_series.unique():
+        assigned_category = 'Other' # Default category
+        for keyword, category_name in keyword_map.items():
+            if re.search(r'\b' + re.escape(keyword) + r'\b', title, re.IGNORECASE):
+                assigned_category = category_name
+                break
+        if assigned_category not in categories:
+            categories[assigned_category] = []
+        categories[assigned_category].append(title)
+    return categories
 
-@st.cache_resource(show_spinner=False)
-def load_model():
-    return SentenceTransformer("TechWolf/JobBERT-v2")
+# --- Main Application ---
+def main():
+    st.set_page_config(layout="wide", page_title="Job Listings Dashboard")
 
-@st.cache_data
-def encode_batch(texts):
-    model = load_model()
-    features = model.tokenize(texts)
-    features = batch_to_device(features, model.device)
-    features["text_keys"] = ["anchor"]
-    with torch.no_grad():
-        out_features = model.forward(features)
-    return out_features["sentence_embedding"].cpu().numpy()
+    st.title("📄 Job Listings Dashboard")
+    st.markdown("Explore job listings categorized by title.")
 
-@st.cache_data
-def encode(texts, batch_size=8):
-    sorted_indices = np.argsort([len(text) for text in texts])
-    sorted_texts = [texts[i] for i in sorted_indices]
-    embeddings = []
-    for i in range(0, len(sorted_texts), batch_size):
-        batch = sorted_texts[i:i+batch_size]
-        embeddings.append(encode_batch(batch))
-    sorted_embeddings = np.concatenate(embeddings)
-    original_order = np.argsort(sorted_indices)
-    return sorted_embeddings[original_order]
+    # Load data
+    df = load_data()
 
-# -------------------- DENOISING + ENCODING --------------------
+    if df.empty:
+        st.error("No data loaded. Please check the data source.")
+        return
 
-with st.spinner("Generating TSDAE embeddings..."):
-    clean_texts = df['text'].tolist()
+    # --- Sidebar for Filters ---
+    st.sidebar.header("Filters & Categories")
 
-    # Denoising method selection (optional UI)
-    denoise_method = st.sidebar.selectbox("Denoising Method", ["a: Random Deletion", "b: Frequency-Based", "c: Freq + Shuffle"])
-    method_code = denoise_method[0]  # 'a', 'b', or 'c'
+    # Option to categorize by exact title or broader category
+    categorization_method = st.sidebar.radio(
+        "Categorize by:",
+        ("Exact Job Title", "Broad Category (Experimental)")
+    )
 
-    freq_dict = build_word_freq_dict(clean_texts) if method_code in ['b', 'c'] else None
-    noisy_texts = [denoise_text(text, method=method_code, word_freq_dict=freq_dict) for text in clean_texts]
+    selected_category = None
 
-    # Generate embeddings
-    clean_embeddings = encode(clean_texts)
-    noisy_embeddings = encode(noisy_texts)
+    if 'Title' not in df.columns:
+        st.error("The 'Title' column is missing from the dataset, which is required for categorization.")
+        return
 
-    # TSDAE-style combination
-    tsdae_embeddings = (clean_embeddings + noisy_embeddings) / 2.0
-    df['tsdae_embedding'] = tsdae_embeddings.tolist()
+    if categorization_method == "Exact Job Title":
+        # Get unique job titles for categorization
+        unique_titles = sorted(df['Title'].astype(str).fillna('Unknown Title').unique())
+        if not unique_titles:
+            st.sidebar.warning("No job titles found to categorize.")
+            return
+        selected_category = st.sidebar.selectbox("Select Job Title Category:", ["All Jobs"] + unique_titles)
+    else: # Broad Category
+        broad_categories_map = get_broad_categories(df['Title'])
+        if not broad_categories_map:
+            st.sidebar.warning("Could not generate broad categories.")
+            return
 
-st.success("TSDAE Embeddings Generated")
+        broad_category_names = ["All Jobs"] + sorted(broad_categories_map.keys())
+        selected_broad_category = st.sidebar.selectbox("Select Broad Category:", broad_category_names)
 
-# -------------------- CLUSTERING --------------------
+        if selected_broad_category != "All Jobs":
+            # Filter titles within the selected broad category for a second-level selection
+            titles_in_category = sorted(broad_categories_map[selected_broad_category])
+            if titles_in_category:
+                selected_category = st.sidebar.selectbox(f"Select Specific Title in '{selected_broad_category}':", ["All in Category"] + titles_in_category)
+                if selected_category == "All in Category":
+                    # This means we filter by the broad category's titles
+                    pass # Handled in filtering logic below
+            else:
+                st.sidebar.info(f"No specific titles found for category '{selected_broad_category}'.")
+                selected_category = "All in Category" # effectively filtering by the broad category
+        else:
+            selected_category = "All Jobs"
 
-num_clusters = st.sidebar.slider("Number of Clusters", min_value=5, max_value=50, value=20)
 
-with st.spinner("Clustering embeddings..."):
-    kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-    kmeans.fit(tsdae_embeddings)
-    cluster_labels = kmeans.labels_
-    df['cluster'] = cluster_labels
+    # --- Main Panel for Displaying Jobs ---
+    st.header("Job Listings")
 
-st.subheader("Cluster Distribution")
-st.bar_chart(df['cluster'].value_counts().sort_index())
+    # Filter data based on selection
+    if selected_category == "All Jobs" or selected_category is None :
+        filtered_df = df
+    elif categorization_method == "Exact Job Title":
+        filtered_df = df[df['Title'] == selected_category]
+    elif categorization_method == "Broad Category (Experimental)":
+        if selected_broad_category != "All Jobs":
+            titles_to_filter = broad_categories_map.get(selected_broad_category, [])
+            if selected_category != "All in Category" and selected_category in titles_to_filter:
+                 # User selected a specific title within a broad category
+                filtered_df = df[df['Title'] == selected_category]
+            else:
+                # User selected "All in Category" or the specific title list was empty
+                filtered_df = df[df['Title'].isin(titles_to_filter)]
+        else: # Should not happen if "All Jobs" is handled above, but as a fallback
+            filtered_df = df
 
-# -------------------- VISUALIZATION --------------------
 
-method = st.sidebar.radio("Dimensionality Reduction Method", ["PCA"])
+    if filtered_df.empty:
+        st.info("No jobs found for the selected category.")
+    else:
+        st.write(f"Displaying {len(filtered_df)} job(s):")
 
-if method == "PCA":
-    reducer = PCA(n_components=2)
-    reduced = reducer.fit_transform(tsdae_embeddings)
-    df['x'] = reduced[:, 0]
-    df['y'] = reduced[:, 1]
+        # Ensure all display columns exist
+        display_cols_present = [col for col in JOB_DETAIL_FEATURES_TO_DISPLAY if col in filtered_df.columns]
+        missing_display_cols = [col for col in JOB_DETAIL_FEATURES_TO_DISPLAY if col not in filtered_df.columns]
+        if missing_display_cols:
+            st.warning(f"Note: The following detail columns are missing from the data and cannot be displayed: {', '.join(missing_display_cols)}")
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.scatterplot(data=df, x='x', y='y', hue='cluster', palette='tab10', legend=False, s=30, ax=ax)
-    ax.set_title("TSDAE Embedding Clusters (2D PCA)")
-    st.pyplot(fig)
 
-# -------------------- SEARCH --------------------
+        if not display_cols_present:
+            st.error("None of the specified job detail features are available in the data.")
+            return
 
-st.subheader("Search and Recommend")
-query = st.text_input("Enter job title or description (e.g., 'data scientist')")
+        # Display job listings
+        for index, row in filtered_df.iterrows():
+            # Use Title as the expander label, or Company if Title is missing
+            expander_label = row.get('Title', row.get('Company', f"Job {index + 1}"))
+            if pd.isna(expander_label) or expander_label == '':
+                expander_label = f"Job {index + 1}"
 
-if query:
-    with st.spinner("Generating embedding and searching..."):
-        query_embedding = encode([query])
-        cluster_sim = cosine_similarity(query_embedding, kmeans.cluster_centers_)
-        best_cluster = np.argmax(cluster_sim)
-        cluster_subset = df[df['cluster'] == best_cluster]
-        cluster_embeddings = np.vstack(cluster_subset['tsdae_embedding'].values)
-        sim_scores = cosine_similarity(query_embedding, cluster_embeddings).flatten()
-        top_n = st.slider("Top N recommendations", min_value=1, max_value=20, value=5)
-        top_indices = np.argsort(sim_scores)[::-1][:top_n]
-        recommendations = cluster_subset.iloc[top_indices][['Title', 'text']]
+            with st.expander(f"**{expander_label}** at {row.get('Company', 'N/A')}"):
+                for feature in display_cols_present:
+                    # Ensure feature value is not NaN before displaying
+                    value = row[feature]
+                    if pd.notna(value):
+                        st.markdown(f"**{feature.replace('.', ' ')}:** {value}")
+                    else:
+                        st.markdown(f"**{feature.replace('.', ' ')}:** Not Available")
+                st.markdown("---")
 
-    st.write("## Recommendations")
-    for i, row in recommendations.iterrows():
-        st.markdown(f"**{row['Title']}**")
-        st.write(row['text'][:300] + "...")
-        st.markdown("---")
+    st.sidebar.markdown("---")
+    st.sidebar.info("This dashboard helps visualize job data. Replace the sample data with your actual dataset.")
+
+if __name__ == '__main__':
+    main()
